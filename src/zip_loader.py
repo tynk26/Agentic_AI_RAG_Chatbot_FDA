@@ -6,10 +6,6 @@ from zipfile import ZipFile
 
 
 def list_inner_zip_entries(outer_zip_path: str) -> list[str]:
-    """
-    바깥 ZIP 안에 들어있는 내부 ZIP 파일 목록을 반환한다.
-    예: prescription/20060131_xxx.zip
-    """
     path = Path(outer_zip_path)
     with ZipFile(path, "r") as outer_zip:
         inner_zips = [
@@ -21,9 +17,6 @@ def list_inner_zip_entries(outer_zip_path: str) -> list[str]:
 
 
 def list_xml_files_in_inner_zip(outer_zip_path: str, inner_zip_name: str) -> list[str]:
-    """
-    바깥 ZIP 안의 특정 내부 ZIP을 열고, 그 안의 XML 파일 목록을 반환한다.
-    """
     path = Path(outer_zip_path)
 
     with ZipFile(path, "r") as outer_zip:
@@ -40,21 +33,6 @@ def list_xml_files_in_inner_zip(outer_zip_path: str, inner_zip_name: str) -> lis
 
 
 def build_inner_zip_index(outer_zip_path: str, limit: int | None = None) -> tuple[int, list[dict]]:
-    """
-    UI 표시용 인덱스를 만든다.
-
-    반환:
-    (
-      전체 내부 ZIP 개수,
-      [
-        {
-          "inner_zip_name": "...",
-          "xml_count": 1,
-          "xml_files": ["abc.xml"]
-        }
-      ]
-    )
-    """
     inner_zips = list_inner_zip_entries(outer_zip_path)
     total_inner_zip_count = len(inner_zips)
 
@@ -91,9 +69,6 @@ def read_xml_from_inner_zip(
     inner_zip_name: str,
     xml_name: str,
 ) -> str:
-    """
-    바깥 ZIP -> 내부 ZIP -> XML 파일을 순서대로 열어 XML 텍스트를 반환한다.
-    """
     path = Path(outer_zip_path)
 
     with ZipFile(path, "r") as outer_zip:
@@ -102,3 +77,24 @@ def read_xml_from_inner_zip(
     with ZipFile(BytesIO(inner_zip_bytes), "r") as inner_zip:
         with inner_zip.open(xml_name) as f:
             return f.read().decode("utf-8", errors="ignore")
+
+
+def get_sample_xml_entries(outer_zip_path: str, sample_size: int = 10) -> list[dict]:
+    """
+    XML이 포함된 내부 ZIP 중 앞에서부터 sample_size개를 반환.
+    """
+    _, indexed_inner_zips = build_inner_zip_index(outer_zip_path, limit=sample_size * 5)
+
+    valid_entries = []
+    for row in indexed_inner_zips:
+        if row.get("xml_count", 0) > 0:
+            valid_entries.append(
+                {
+                    "inner_zip_name": row["inner_zip_name"],
+                    "xml_name": row["xml_files"][0],
+                }
+            )
+        if len(valid_entries) >= sample_size:
+            break
+
+    return valid_entries

@@ -10,7 +10,7 @@ from src.zip_loader import (
 from src.spl_parser import parse_spl_xml
 from src.section_extractor import extract_sections_from_text
 from src.chunker import build_chunk_records
-from src.retriever import build_tfidf_index, search_tfidf
+from src.retriever import build_tfidf_index, search_tfidf, highlight_text, expand_query
 
 
 st.set_page_config(
@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("🧪 FDA SPL 기반 한국어 RAG 데모")
-st.caption("Iteration 3 - 샘플 청크 인덱싱 → TF-IDF 검색 → 근거 청크 확인")
+st.caption("Iteration 4 - 검색 품질 개선판: 청킹 개선 + 질의 확장 + 점수 해석 강화")
 
 with st.sidebar:
     st.header("설정")
@@ -39,7 +39,7 @@ with st.sidebar:
         "청크 크기(문자 수)",
         min_value=200,
         max_value=3000,
-        value=800,
+        value=900,
         step=100,
     )
 
@@ -47,8 +47,8 @@ with st.sidebar:
         "청크 오버랩(문자 수)",
         min_value=0,
         max_value=1000,
-        value=150,
-        step=50,
+        value=120,
+        step=20,
     )
 
     top_k = st.number_input(
@@ -61,6 +61,7 @@ with st.sidebar:
 
     show_full_section = st.checkbox("선택한 섹션 원문 전체 표시", value=False)
     show_chunk_text = st.checkbox("선택한 검색 청크 원문 표시", value=True)
+    show_highlighted = st.checkbox("검색어 하이라이트 표시", value=True)
 
 st.markdown("## 파이프라인 단계")
 
@@ -76,10 +77,10 @@ with col3:
     st.info("3단계\n\nFDA SPL 섹션 추출")
 
 with col4:
-    st.info("4단계\n\n섹션별 청크 생성")
+    st.info("4단계\n\n경계 기반 청크 생성")
 
 with col5:
-    st.info("5단계\n\nTF-IDF 검색 및 근거 표시")
+    st.info("5단계\n\n질의 확장 TF-IDF 검색")
 
 st.divider()
 
@@ -205,12 +206,25 @@ st.divider()
 
 st.subheader("🔎 질문으로 청크 검색")
 
-default_query = "warfarin drug interactions"
+default_query = "aspirin interactions"
 user_query = st.text_input(
     "질문 입력",
     value=default_query,
-    help="예: contraindications, adverse reactions, drug interactions, dosage",
+    help="예: aspirin interactions, side effects, warnings, contraindications",
 )
+
+expanded_query = expand_query(user_query)
+
+query_col1, query_col2 = st.columns([1.6, 1.0])
+
+with query_col1:
+    st.markdown("### 확장된 검색 질의")
+    st.code(expanded_query, language="text")
+
+with query_col2:
+    st.markdown("### 점수 해석")
+    st.write("- raw_score: TF-IDF 원시 유사도")
+    st.write("- relative_score: 이번 검색 결과 내 최고점 대비 상대점수")
 
 search_button = st.button("검색 실행", type="primary")
 
@@ -222,7 +236,7 @@ if search_button or user_query.strip():
         top_k=int(top_k),
     )
 
-result_col1, result_col2 = st.columns([1.2, 1.8])
+result_col1, result_col2 = st.columns([1.15, 1.85])
 
 with result_col1:
     st.subheader("📋 검색 결과 목록")
@@ -236,9 +250,10 @@ with result_col1:
         result_rows.append(
             {
                 "rank": row["rank"],
-                "score": row["score"],
-                "document_title": row["document_title"][:50],
-                "section_title": row["section_title"][:40],
+                "raw_score": row["raw_score"],
+                "relative_score": row["relative_score"],
+                "document_title": row["document_title"][:45],
+                "section_title": row["section_title"][:35],
                 "chunk_index": row["chunk_index"],
                 "chunk_length": row["chunk_length"],
             }
@@ -249,8 +264,8 @@ with result_col1:
     result_option_map = {}
     for row in search_results:
         label = (
-            f"{row['rank']}위 | 점수 {row['score']:.4f} | "
-            f"{row['section_title'][:30]} | 청크 {row['chunk_index']}"
+            f"{row['rank']}위 | 상대 {row['relative_score']:.1f} | "
+            f"{row['section_title'][:25]} | 청크 {row['chunk_index']}"
         )
         result_option_map[label] = row
 
@@ -264,7 +279,8 @@ with result_col1:
     st.json(
         {
             "rank": selected_result["rank"],
-            "score": selected_result["score"],
+            "raw_score": selected_result["raw_score"],
+            "relative_score": selected_result["relative_score"],
             "document_title": selected_result["document_title"],
             "section_title": selected_result["section_title"],
             "chunk_index": selected_result["chunk_index"],
@@ -312,19 +328,42 @@ with result_col2:
         if not show_full_section:
             section_preview = section_preview[:3000]
 
-        st.text_area(
-            "섹션 원문",
-            value=section_preview,
-            height=240,
-        )
+        if show_highlighted:
+            highlighted_section = highlight_text(section_preview, user_query)
+            st.markdown("### 섹션 원문 (하이라이트)")
+            st.markdown(
+                f"""
+                <div style="padding:12px;border:1px solid #444;border-radius:8px;max-height:260px;overflow:auto;">
+                {highlighted_section}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.text_area(
+                "섹션 원문",
+                value=section_preview,
+                height=240,
+            )
 
     if show_chunk_text:
         st.markdown("### 검색된 청크 원문")
-        st.text_area(
-            "청크 원문",
-            value=selected_result["chunk_text"],
-            height=320,
-        )
+
+        if show_highlighted:
+            st.markdown(
+                f"""
+                <div style="padding:12px;border:1px solid #444;border-radius:8px;max-height:320px;overflow:auto;">
+                {selected_result["highlighted_chunk_text"]}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.text_area(
+                "청크 원문",
+                value=selected_result["chunk_text"],
+                height=320,
+            )
 
 st.divider()
 
@@ -352,6 +391,7 @@ with right_debug:
     st.json(
         {
             "query": user_query,
+            "expanded_query": expanded_query,
             "top_k": int(top_k),
             "sample_size": int(sample_size),
             "chunk_size": int(chunk_size),
@@ -363,31 +403,32 @@ with right_debug:
 with st.expander("이번 Iteration에서 검증해야 할 것"):
     st.markdown(
         """
-        - 샘플 청크들이 인덱싱되는지
-        - 질문 입력 후 검색 결과가 나오는지
-        - 각 결과에 점수가 붙는지
-        - 어떤 문서/섹션/청크에서 나온 결과인지 보이는지
-        - 검색된 청크 원문을 눈으로 확인할 수 있는지
+        - 단어가 이전보다 덜 잘리는지
+        - 확장된 검색 질의가 보이는지
+        - raw_score와 relative_score가 같이 보이는지
+        - interactions / side effects / warnings 질의에서 더 자연스럽게 검색되는지
+        - 검색어 하이라이트가 청크에 적용되는지
         """
     )
 
 with st.expander("질문 예시"):
     st.markdown(
         """
-        - warfarin drug interactions
+        - aspirin interactions
+        - warfarin interactions
+        - side effects
+        - warnings
         - contraindications
-        - adverse reactions
-        - dosage and administration
-        - warnings and precautions
-        - use in specific populations
+        - dosage
+        - pregnancy
         """
     )
 
 with st.expander("다음 Iteration 예고"):
     st.markdown(
         """
-        - 검색된 상위 청크를 기반으로 답변 초안 생성
-        - 질문 + 근거 청크를 결합한 RAG 응답 생성기 추가
-        - 프론트에서 '질문 → 검색 → 답변 → 근거' 전체 흐름 확인
+        - 검색된 상위 청크를 바탕으로 답변 초안 생성
+        - 질문 + 근거 청크 조합으로 간단한 RAG 응답 생성기 구현
+        - 프론트에서 질문 → 검색 → 답변 → 근거를 한 번에 확인
         """
     )
